@@ -5,26 +5,17 @@ using System.Collections.Generic;
 
 public class MyBot : IChessBot
 {
-    private const sbyte EXACT = 0, LOWERBOUND = -1, UPPERBOUND = 1, INVALID = -2;
+    private const sbyte INVALID = 0, EXACT = 1, LOWERBOUND = 2, UPPERBOUND = 3;
     struct Transposition
     {
-        public Transposition(ulong zHash, int dep, int eva, Move mv)
-        {
-            zobristHash = zHash;
-            depth = dep;
-            evaluation = eva;
-            FLAG = INVALID;
-            move = mv;
-        }
-        public ulong zobristHash = 0;
-        public int depth = 0;
-        public int evaluation = 0;
-        public sbyte FLAG = INVALID;
-        public Move move = Move.NullMove;
+
+        public ulong zobristHash;
+        public int depth;
+        public int evaluation;
+        public sbyte FLAG;
+        public Move move;
 
     }
-
-    int maxTime = 30;
 
     private ulong mask = 0x7FFFFF;
 
@@ -38,30 +29,39 @@ public class MyBot : IChessBot
     // empty, pawn, horse, bishop, castle, queen, king
     int[] pieceValues = { 0, 100, 320, 330, 500, 900, 20000 };
 
-    int mDepth;
     int nodes = 0;
+    int mDepth;
 
     int infinity = 999999;
+    int fraction = 40;
 
     public Move Think(Board board, Timer timer)
     {
+        Console.WriteLine("______________________________________");
+        int maxTime = timer.MillisecondsRemaining / fraction;
         Transposition bestMove = transpositionTable[board.ZobristKey & mask];
-        int time = timer.MillisecondsRemaining / maxTime;
-        mDepth = 4;
-        for (int depth = 0; ; depth++)
+        for (int depth = 1; ; depth++)
         {
-            Search(board, depth, -infinity, infinity);
+            mDepth = depth;
+            int search = Search(board, depth, -infinity, infinity, 0);
             bestMove = transpositionTable[board.ZobristKey & mask];
             Console.WriteLine(nodes);
+            Console.WriteLine("time elapsed : " + (float)(timer.MillisecondsElapsedThisTurn));
 
-            if (!ShouldDeepen(timer, time))
-            {
-                break;
-            }
+            Console.WriteLine("depth : " + depth);
+            Console.WriteLine("bestMove : " + bestMove.move);
+            Console.WriteLine("search value : " + search);
+
+            if (!ShouldDeepen(timer, maxTime)) break;
         }
         return bestMove.move;
     }
 
+    bool ShouldDeepen(Timer timer, int maxTime)
+    {
+        int currentThinkTime = timer.MillisecondsElapsedThisTurn;
+        return ((maxTime - currentThinkTime) > currentThinkTime * 2);
+    }
 
     int Evaluate(Board board)
     {
@@ -77,88 +77,100 @@ public class MyBot : IChessBot
         return eval * perspective;
     }
 
-    int Search(Board board, int depth, int alpha, int beta)
+    int Search(Board board, int depth, int alpha, int beta, int numExtensions)
     {
+        if(depth > 0 && board.IsRepeatedPosition())
+        {
+            //Console.WriteLine('a');
+            return 0;
+        }
+        {
+            
+        }
+        if(board.IsDraw())
+        {
+            //Console.WriteLine('b');
+            return 0;
+        }
 
         Move[] moves = OrderMoves(board);
 
         if (depth == 0 || moves.Length == 0)
         {
 
-            if (board.IsInCheckmate())
+            if(board.IsInCheckmate())
             {
-                int rootDistance = mDepth - depth;
-                return -infinity + rootDistance;
+                int depthFromRoot = mDepth - depth;
+                //Console.WriteLine('c');
+                return -infinity + depthFromRoot;
+                
             }
             //return Evaluate(board);
+            //Console.WriteLine('d');
             return SearchForCapture(board, alpha, beta);
         }
 
         int highestEval = int.MinValue;
         int startingAlpha = alpha;
         ref Transposition transposition = ref transpositionTable[board.ZobristKey & mask];
-        if (transposition.zobristHash == board.ZobristKey && transposition.FLAG != INVALID && transposition.depth >= depth && depth < mDepth)
+        if (transposition.zobristHash == board.ZobristKey && transposition.FLAG != INVALID && transposition.depth >= depth)
         {
 
-            if (transposition.FLAG == EXACT) return transposition.evaluation;
+            if (transposition.FLAG == EXACT)
+            {
+                //Console.WriteLine('e');
+                return transposition.evaluation;
+
+            }
             else if (transposition.FLAG == LOWERBOUND) alpha = Math.Max(alpha, transposition.evaluation);
             else if (transposition.FLAG == UPPERBOUND) beta = Math.Min(beta, transposition.evaluation);
-            if (alpha >= beta) return transposition.evaluation;
+            if (alpha >= beta)
+            {
+                //Console.WriteLine('f');
+                return transposition.evaluation;
+            }
         }
-
-        if (depth > 0 && board.IsRepeatedPosition())
-        {
-            return 0;
-        }
-        {
-
-        }
-        if (board.IsDraw())
-        {
-            return 0;
-        }
-
         Move bestMove = moves[0];
-
         foreach (Move move in moves)
         {
             board.MakeMove(move);
-
-            int value = -Search(board, depth - 1, -beta, -alpha);
+            int extension = numExtensions < 16 && board.IsInCheck() ? 1 : 0;
+            int value = -Search(board, depth - 1 + extension, -beta, -alpha, numExtensions + extension);
 
             board.UndoMove(move);
 
-            if (highestEval < value)
+            if(highestEval < value)
             {
                 highestEval = value;
-                bestMove = move;
+                    bestMove = move;
+                
             }
 
             alpha = Math.Max(alpha, value);
             if (alpha >= beta)
             {
-                break;
+                break; 
             }
         }
 
         transposition.evaluation = highestEval;
         transposition.zobristHash = board.ZobristKey;
-        transposition.move = bestMove;
-        if (highestEval < startingAlpha)
+        if(highestEval < startingAlpha)
         {
             transposition.FLAG = UPPERBOUND;
         }
-        else if (highestEval >= beta)
+        else if(highestEval >= beta)
         {
             transposition.FLAG = LOWERBOUND;
         }
 
         else
         {
-            transposition.FLAG = EXACT;
+            transposition.FLAG = EXACT; 
         }
         transposition.depth = depth;
-
+        transposition.move = bestMove;
+        //Console.WriteLine('g');
         return highestEval;
     }
 
@@ -167,13 +179,20 @@ public class MyBot : IChessBot
         Move[] moves = board.GetLegalMoves(capturesOnly);
         int[] scores = new int[moves.Length];
         int i = 0;
+        
         foreach (Move move in moves)
         {
+            Transposition best = transpositionTable[board.ZobristKey & mask];
             int scoreGuess = 0;
             Piece start = board.GetPiece(move.StartSquare);
             Piece end = board.GetPiece(move.TargetSquare);
+            if(best.move == move && board.ZobristKey == best.zobristHash)
+            {
+                scoreGuess += infinity;
+            }
+            
 
-            if (end.PieceType == PieceType.None)
+            if (end.PieceType != PieceType.None)
             {
                 scoreGuess -= 10 * (pieceValues[(int)end.PieceType] - pieceValues[(int)start.PieceType]);
             }
@@ -184,12 +203,12 @@ public class MyBot : IChessBot
                 scoreGuess -= 5 * pieceValues[(int)move.PromotionPieceType];
             }
 
+
             scores[i] = scoreGuess;
             i++;
         }
 
         Array.Sort(scores, moves);
-        //moves.Reverse();
         /*Console.WriteLine("begin : " + counter);
         foreach (Move move in moves)
         {
@@ -250,9 +269,4 @@ public class MyBot : IChessBot
         return value;
     }
 
-    bool ShouldDeepen(Timer timer, int maxThinkTime)
-    {
-        int currentThinkTime = timer.MillisecondsElapsedThisTurn;
-        return ((maxThinkTime - currentThinkTime) > currentThinkTime * 2);
-    }
 }
